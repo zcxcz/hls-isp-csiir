@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# HLS compiled executables
+hls/tb_simple
+hls/tb_random
+
+# Object files
+*.o
+
+# Verification outputs (generated)
+verification/intermediate/
+verification/test_vectors/random_*.txt
+verification/test_vectors/config_random_*.txt

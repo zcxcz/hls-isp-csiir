@@ -1,0 +1,40 @@
+{
+  "start_time": "2026-03-23T21:01:29.802761",
+  "end_time": "2026-03-23T21:02:10.256147",
+  "total": 100,
+  "passed": 100,
+  "pass_rate": 100.0,
+  "errors": {
+    "stage1_max": 0,
+    "stage2_max": 1,
+    "stage3_max": 1,
+    "output_max": 1
+  },
+  "pattern_stats": {
+    "gradient": {
+      "total": 22,
+      "passed": 22
+    },
+    "random": {
+      "total": 34,
+      "passed": 34
+    },
+    "corner": {
+      "total": 8,
+      "passed": 8
+    },
+    "edge": {
+      "total": 16,
+      "passed": 16
+    },
+    "textured": {
+      "total": 15,
+      "passed": 15
+    },
+    "extreme": {
+      "total": 5,
+      "passed": 5
+    }
+  },
+  "failed_cases": []
+}
