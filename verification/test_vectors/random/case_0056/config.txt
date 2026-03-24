@@ -1,0 +1,5 @@
+width 17
+height 38
+win_thresh 33 48 49 50
+grad_clip 32 45 48 49
+blend_ratio 63 0 3 59

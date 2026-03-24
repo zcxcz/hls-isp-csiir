@@ -14,49 +14,18 @@
 #include "div_utils.h"
 
 // ============================================================
-// Compute Weighted Sum
-// ============================================================
-static void compute_weighted_sum(
-    pixel_s11_t   src_s11_5x5[5][5],
-    avg_factor_t  factor[5][5],
-    ap_uint<1>    mask[5][5],
-    weighted_sum_t &weighted_sum,
-    sum_factor_t  &sum_factor
-) {
-    #pragma HLS INLINE
-    #pragma HLS ARRAY_PARTITION variable=src_s11_5x5 complete
-    #pragma HLS ARRAY_PARTITION variable=factor complete
-    #pragma HLS ARRAY_PARTITION variable=mask complete
-
-    weighted_sum = 0;
-    sum_factor = 0;
-
-    for (int i = 0; i < 5; i++) {
-        #pragma HLS UNROLL
-        for (int j = 0; j < 5; j++) {
-            #pragma HLS UNROLL
-            avg_factor_t masked_factor = factor[i][j] & ((avg_factor_t)mask[i][j]);
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
-        }
-    }
-}
-
-// ============================================================
 // Compute Average Value
 // ============================================================
 static avg_value_t compute_average(
-    weighted_sum_t weighted_sum,
-    sum_factor_t   sum_factor
+    int weighted_sum,
+    int sum_factor
 ) {
     #pragma HLS INLINE
 
-    // Handle edge case where sum_factor is zero
     if (sum_factor == 0) {
         return 0;
     }
 
-    // Use lookup table division
     return div_by_lookup(weighted_sum, sum_factor);
 }
 
@@ -71,9 +40,13 @@ static void select_kernels(
 ) {
     #pragma HLS INLINE
 
-    // Copy appropriate kernels based on window size thresholds
-    if (win_size < win_thresh[0]) {
-        // avg0: zeros, avg1: 2x2
+    int ws = (int)win_size;
+    int t0 = (int)win_thresh[0];
+    int t1 = (int)win_thresh[1];
+    int t2 = (int)win_thresh[2];
+    int t3 = (int)win_thresh[3];
+
+    if (ws < t0) {
         for (int i = 0; i < 5; i++) {
             #pragma HLS UNROLL
             for (int j = 0; j < 5; j++) {
@@ -82,8 +55,7 @@ static void select_kernels(
                 avg1_factor_c[i][j] = AVG_FACTOR_2x2[i][j];
             }
         }
-    } else if (win_size < win_thresh[1]) {
-        // avg0: 2x2, avg1: 3x3
+    } else if (ws < t1) {
         for (int i = 0; i < 5; i++) {
             #pragma HLS UNROLL
             for (int j = 0; j < 5; j++) {
@@ -92,8 +64,7 @@ static void select_kernels(
                 avg1_factor_c[i][j] = AVG_FACTOR_3x3[i][j];
             }
         }
-    } else if (win_size < win_thresh[2]) {
-        // avg0: 3x3, avg1: 4x4
+    } else if (ws < t2) {
         for (int i = 0; i < 5; i++) {
             #pragma HLS UNROLL
             for (int j = 0; j < 5; j++) {
@@ -102,8 +73,7 @@ static void select_kernels(
                 avg1_factor_c[i][j] = AVG_FACTOR_4x4[i][j];
             }
         }
-    } else if (win_size < win_thresh[3]) {
-        // avg0: 4x4, avg1: 5x5
+    } else if (ws < t3) {
         for (int i = 0; i < 5; i++) {
             #pragma HLS UNROLL
             for (int j = 0; j < 5; j++) {
@@ -113,7 +83,6 @@ static void select_kernels(
             }
         }
     } else {
-        // avg0: 5x5, avg1: zeros
         for (int i = 0; i < 5; i++) {
             #pragma HLS UNROLL
             for (int j = 0; j < 5; j++) {
@@ -123,6 +92,11 @@ static void select_kernels(
             }
         }
     }
+}
+
+// Helper function to get masked factor
+static int get_masked_factor(avg_factor_t factor, int mask_val) {
+    return (int)factor & mask_val;
 }
 
 // ============================================================
@@ -140,9 +114,7 @@ void stage2_average(
     #pragma HLS INLINE
     #pragma HLS ARRAY_PARTITION variable=src_s11_5x5 complete
 
-    // --------------------------------------------------------
-    // Step 1: Select kernels based on window size
-    // --------------------------------------------------------
+    // Select kernels
     avg_factor_t avg0_factor_c[5][5];
     avg_factor_t avg1_factor_c[5][5];
     #pragma HLS ARRAY_PARTITION variable=avg0_factor_c complete
@@ -150,21 +122,20 @@ void stage2_average(
 
     select_kernels(win_size, win_thresh, avg0_factor_c, avg1_factor_c);
 
-    // --------------------------------------------------------
-    // Step 2: Compute avg0 values (smaller kernel)
-    // --------------------------------------------------------
-    weighted_sum_t weighted_sum;
-    sum_factor_t sum_factor;
+    int weighted_sum;
+    int sum_factor;
 
-    // avg0_c: Center average (no mask - uses full kernel)
+    // avg0_c: Center average
     weighted_sum = 0;
     sum_factor = 0;
     for (int i = 0; i < 5; i++) {
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)avg0_factor_c[i][j];
-            sum_factor += avg0_factor_c[i][j];
+            int factor = (int)avg0_factor_c[i][j];
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg0_c = compute_average(weighted_sum, sum_factor);
@@ -176,9 +147,10 @@ void stage2_average(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            avg_factor_t masked_factor = avg0_factor_c[i][j] & (avg_factor_t)MASK_U[i][j];
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
+            int factor = ((int)avg0_factor_c[i][j]) & ((int)MASK_U[i][j]);
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg0_u = compute_average(weighted_sum, sum_factor);
@@ -190,9 +162,10 @@ void stage2_average(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            avg_factor_t masked_factor = avg0_factor_c[i][j] & (avg_factor_t)MASK_D[i][j];
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
+            int factor = ((int)avg0_factor_c[i][j]) & ((int)MASK_D[i][j]);
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg0_d = compute_average(weighted_sum, sum_factor);
@@ -204,9 +177,10 @@ void stage2_average(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            avg_factor_t masked_factor = avg0_factor_c[i][j] & (avg_factor_t)MASK_L[i][j];
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
+            int factor = ((int)avg0_factor_c[i][j]) & ((int)MASK_L[i][j]);
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg0_l = compute_average(weighted_sum, sum_factor);
@@ -218,25 +192,25 @@ void stage2_average(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            avg_factor_t masked_factor = avg0_factor_c[i][j] & (avg_factor_t)MASK_R[i][j];
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
+            int factor = ((int)avg0_factor_c[i][j]) & ((int)MASK_R[i][j]);
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg0_r = compute_average(weighted_sum, sum_factor);
 
-    // --------------------------------------------------------
-    // Step 3: Compute avg1 values (larger kernel)
-    // --------------------------------------------------------
-    // avg1_c: Center average (no mask)
+    // avg1_c: Center average
     weighted_sum = 0;
     sum_factor = 0;
     for (int i = 0; i < 5; i++) {
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)avg1_factor_c[i][j];
-            sum_factor += avg1_factor_c[i][j];
+            int factor = (int)avg1_factor_c[i][j];
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg1_c = compute_average(weighted_sum, sum_factor);
@@ -248,9 +222,10 @@ void stage2_average(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            avg_factor_t masked_factor = avg1_factor_c[i][j] & (avg_factor_t)MASK_U[i][j];
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
+            int factor = ((int)avg1_factor_c[i][j]) & ((int)MASK_U[i][j]);
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg1_u = compute_average(weighted_sum, sum_factor);
@@ -262,9 +237,10 @@ void stage2_average(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            avg_factor_t masked_factor = avg1_factor_c[i][j] & (avg_factor_t)MASK_D[i][j];
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
+            int factor = ((int)avg1_factor_c[i][j]) & ((int)MASK_D[i][j]);
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg1_d = compute_average(weighted_sum, sum_factor);
@@ -276,9 +252,10 @@ void stage2_average(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            avg_factor_t masked_factor = avg1_factor_c[i][j] & (avg_factor_t)MASK_L[i][j];
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
+            int factor = ((int)avg1_factor_c[i][j]) & ((int)MASK_L[i][j]);
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg1_l = compute_average(weighted_sum, sum_factor);
@@ -290,9 +267,10 @@ void stage2_average(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            avg_factor_t masked_factor = avg1_factor_c[i][j] & (avg_factor_t)MASK_R[i][j];
-            weighted_sum += (weighted_sum_t)src_s11_5x5[i][j] * (weighted_sum_t)masked_factor;
-            sum_factor += masked_factor;
+            int factor = ((int)avg1_factor_c[i][j]) & ((int)MASK_R[i][j]);
+            int pixel = (int)src_s11_5x5[i][j];
+            weighted_sum = weighted_sum + pixel * factor;
+            sum_factor = sum_factor + factor;
         }
     }
     avg1_r = compute_average(weighted_sum, sum_factor);

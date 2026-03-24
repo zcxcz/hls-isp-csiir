@@ -1,0 +1,26 @@
+{
+  "case_id": "case_0070",
+  "pattern_type": "random",
+  "seed": 12345,
+  "width": 54,
+  "height": 122,
+  "win_thresh": [
+    22,
+    32,
+    42,
+    48
+  ],
+  "grad_clip": [
+    28,
+    38,
+    46,
+    48
+  ],
+  "blend_ratio": [
+    58,
+    39,
+    56,
+    21
+  ],
+  "edge_protect": 52
+}

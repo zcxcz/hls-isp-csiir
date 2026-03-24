@@ -1,6 +1,6 @@
 // ============================================================
 // ISP-CSIIR Simplified HLS Test Bench with Intermediate Output
-// Fixed version matching Python golden model
+// Updated to use 5-direction gradients (matching Python model)
 // ============================================================
 
 #include <iostream>
@@ -138,13 +138,9 @@ int16_t div_by_nr(int64_t numerator, uint32_t denominator) {
     bool neg = numerator < 0;
     uint64_t abs_num = neg ? -numerator : numerator;
 
-    // For initial reciprocal estimate:
-    // Python: msb_pos = denominator.bit_length() - 1
-    // x0 = 1 << (16 - msb_pos)
-    // We need to find the position of the MSB (0-indexed from LSB)
     int msb_pos = 0;
     uint32_t temp = denominator;
-    while (temp >>= 1) msb_pos++;  // Find MSB position
+    while (temp >>= 1) msb_pos++;
     uint32_t x0 = (denominator <= 64) ? INV_TABLE[denominator] : (1u << (16 - msb_pos));
     uint64_t prod = (uint64_t)denominator * x0;
     int64_t two_minus = (2LL << 16) - (int64_t)prod;
@@ -203,7 +199,6 @@ void stage1_gradient(pixel_u10_t window[5][5], Stage1Data &s1, const uint8_t gra
     else s1.win_size = 40;
 }
 
-// Helper: compute directional average matching Python's compute_directional_average
 int16_t compute_directional_average(pixel_s11_t src_s11[5][5], const uint8_t factor[5][5], const uint8_t mask[5][5]) {
     int32_t weighted_sum = 0;
     int sum_factor = 0;
@@ -221,7 +216,6 @@ int16_t compute_directional_average(pixel_s11_t src_s11[5][5], const uint8_t fac
 }
 
 void stage2_average(pixel_s11_t src_s11[5][5], win_size_t win_size, const uint8_t win_thresh[4], Stage2Data &s2) {
-    // Select kernels based on window size (matching Python logic)
     const uint8_t (*avg0_factor)[5];
     const uint8_t (*avg1_factor)[5];
 
@@ -244,14 +238,12 @@ void stage2_average(pixel_s11_t src_s11[5][5], win_size_t win_size, const uint8_
         avg1_factor = zeros;
     }
 
-    // Compute avg0 values (matching Python: center uses MASK_ALL, others use direction masks)
     s2.avg0_c = compute_directional_average(src_s11, avg0_factor, MASK_ALL);
     s2.avg0_u = compute_directional_average(src_s11, avg0_factor, MASK_U);
     s2.avg0_d = compute_directional_average(src_s11, avg0_factor, MASK_D);
     s2.avg0_l = compute_directional_average(src_s11, avg0_factor, MASK_L);
     s2.avg0_r = compute_directional_average(src_s11, avg0_factor, MASK_R);
 
-    // Compute avg1 values
     s2.avg1_c = compute_directional_average(src_s11, avg1_factor, MASK_ALL);
     s2.avg1_u = compute_directional_average(src_s11, avg1_factor, MASK_U);
     s2.avg1_d = compute_directional_average(src_s11, avg1_factor, MASK_D);
@@ -259,23 +251,25 @@ void stage2_average(pixel_s11_t src_s11[5][5], win_size_t win_size, const uint8_
     s2.avg1_r = compute_directional_average(src_s11, avg1_factor, MASK_R);
 }
 
-void stage3_blend(grad_t grad, const Stage2Data &s2, Stage3Data &s3) {
-    // Python uses grad_center for all 5 directions
-    // grad_sum = grad_c + grad_u + grad_d + grad_l + grad_r = 5 * grad
-    uint32_t grad_sum = (uint32_t)grad * 5;
+// Updated: Use 5-direction gradients
+void stage3_blend_5dir(grad_t grad_c, grad_t grad_u, grad_t grad_d, grad_t grad_l, grad_t grad_r,
+                       const Stage2Data &s2, Stage3Data &s3) {
+    // Compute gradient sum using 5 different gradients
+    uint32_t grad_sum = (uint32_t)grad_c + (uint32_t)grad_u + (uint32_t)grad_d +
+                        (uint32_t)grad_l + (uint32_t)grad_r;
 
     if (grad_sum == 0) {
         // Equal weight average
         s3.blend0_grad = (s2.avg0_c + s2.avg0_u + s2.avg0_d + s2.avg0_l + s2.avg0_r) / 5;
         s3.blend1_grad = (s2.avg1_c + s2.avg1_u + s2.avg1_d + s2.avg1_l + s2.avg1_r) / 5;
     } else {
-        // Gradient-weighted average
-        // weighted_sum = avg_c * grad + avg_u * grad + ... = grad * (avg_c + avg_u + ...)
-        int64_t sum_avg0 = (int64_t)s2.avg0_c + s2.avg0_u + s2.avg0_d + s2.avg0_l + s2.avg0_r;
-        int64_t sum_avg1 = (int64_t)s2.avg1_c + s2.avg1_u + s2.avg1_d + s2.avg1_l + s2.avg1_r;
-
-        int64_t weighted_sum0 = grad * sum_avg0;
-        int64_t weighted_sum1 = grad * sum_avg1;
+        // Gradient-weighted average with 5 different gradient values
+        int64_t weighted_sum0 = (int64_t)s2.avg0_c * grad_c + (int64_t)s2.avg0_u * grad_u +
+                                 (int64_t)s2.avg0_d * grad_d + (int64_t)s2.avg0_l * grad_l +
+                                 (int64_t)s2.avg0_r * grad_r;
+        int64_t weighted_sum1 = (int64_t)s2.avg1_c * grad_c + (int64_t)s2.avg1_u * grad_u +
+                                 (int64_t)s2.avg1_d * grad_d + (int64_t)s2.avg1_l * grad_l +
+                                 (int64_t)s2.avg1_r * grad_r;
 
         s3.blend0_grad = div_by_nr(weighted_sum0, grad_sum);
         s3.blend1_grad = div_by_nr(weighted_sum1, grad_sum);
@@ -284,17 +278,12 @@ void stage3_blend(grad_t grad, const Stage2Data &s2, Stage3Data &s3) {
 
 pixel_u10_t stage4_output(const Stage3Data &s3, const Stage2Data &s2, win_size_t win_size,
                           const uint8_t win_thresh[4], const uint8_t blend_ratio[4]) {
-    // Determine blend ratio index (matching Python)
     int ratio_idx = std::min(std::max((win_size >> 3) - 2, 0), 3);
     int ratio = blend_ratio[ratio_idx];
 
-    // Horizontal blend (matching Python horizontal_blend function)
-    // numerator = ratio * blend_grad + (64 - ratio) * avg_u
-    // result = numerator >> 6
     int32_t blend0_hor = (ratio * s3.blend0_grad + (64 - ratio) * s2.avg0_u) >> 6;
     int32_t blend1_hor = (ratio * s3.blend1_grad + (64 - ratio) * s2.avg1_u) >> 6;
 
-    // Determine final blend based on window size
     int16_t blend_uv;
 
     if (win_size < win_thresh[0]) {
@@ -302,17 +291,22 @@ pixel_u10_t stage4_output(const Stage3Data &s3, const Stage2Data &s2, win_size_t
     } else if (win_size >= win_thresh[3]) {
         blend_uv = blend1_hor;
     } else {
-        // Interpolate between blend0_hor and blend1_hor
-        int win_remain = win_size & 0x7;  // win_size % 8
+        int win_remain = win_size & 0x7;
         blend_uv = (blend0_hor * win_remain + blend1_hor * (8 - win_remain)) >> 3;
     }
 
-    // Convert to unsigned and clip
     int16_t output_signed = blend_uv + 512;
     if (output_signed < 0) output_signed = 0;
     if (output_signed > 1023) output_signed = 1023;
 
     return (pixel_u10_t)output_signed;
+}
+
+// Helper: Get gradient with boundary replication
+int get_grad_with_boundary(const std::vector<int> &grad_map, int row, int col, int h, int w) {
+    int r = std::max(0, std::min(row, h - 1));
+    int c = std::max(0, std::min(col, w - 1));
+    return grad_map[r * w + c];
 }
 
 // ============================================================
@@ -371,7 +365,7 @@ void save_output(const std::string &fn, const std::vector<uint16_t> &in, const s
 // ============================================================
 int main() {
     std::cout << "========================================" << std::endl;
-    std::cout << "ISP-CSIIR HLS Test Bench (Fixed Version)" << std::endl;
+    std::cout << "ISP-CSIIR HLS Test Bench (5-Direction Gradient)" << std::endl;
     std::cout << "========================================" << std::endl;
 
     uint8_t win_thresh[4] = {16, 24, 32, 40};
@@ -399,11 +393,30 @@ int main() {
         std::vector<Stage3Data> s3_data(t.w * t.h);
         std::vector<uint16_t> output(t.w * t.h);
 
+        // Step 1: Pre-compute gradient map (like Python model)
+        std::vector<int> grad_map(t.w * t.h);
+        for (int r = 0; r < t.h; r++) {
+            for (int c = 0; c < t.w; c++) {
+                pixel_u10_t win[5][5];
+                for (int i = 0; i < 5; i++) {
+                    for (int j = 0; j < 5; j++) {
+                        int ri = std::max(0, std::min(r + i - 2, t.h - 1));
+                        int ci = std::max(0, std::min(c + j - 2, t.w - 1));
+                        win[i][j] = input[ri * t.w + ci];
+                    }
+                }
+                Stage1Data temp;
+                stage1_gradient(win, temp, grad_clip);
+                grad_map[r * t.w + c] = temp.grad;
+            }
+        }
+
+        // Step 2: Process with 5-direction gradients
         for (int r = 0; r < t.h; r++) {
             for (int c = 0; c < t.w; c++) {
                 int idx = r * t.w + c;
 
-                // Get 5x5 window with boundary replication
+                // Get 5x5 window
                 pixel_u10_t win[5][5];
                 pixel_s11_t s11[5][5];
                 for (int i = 0; i < 5; i++) {
@@ -417,7 +430,15 @@ int main() {
 
                 stage1_gradient(win, s1_data[idx], grad_clip);
                 stage2_average(s11, s1_data[idx].win_size, win_thresh, s2_data[idx]);
-                stage3_blend(s1_data[idx].grad, s2_data[idx], s3_data[idx]);
+
+                // Get 5-direction gradients from gradient map
+                grad_t grad_c = get_grad_with_boundary(grad_map, r, c, t.h, t.w);
+                grad_t grad_u = get_grad_with_boundary(grad_map, r - 1, c, t.h, t.w);
+                grad_t grad_d = get_grad_with_boundary(grad_map, r + 1, c, t.h, t.w);
+                grad_t grad_l = get_grad_with_boundary(grad_map, r, c - 1, t.h, t.w);
+                grad_t grad_r = get_grad_with_boundary(grad_map, r, c + 1, t.h, t.w);
+
+                stage3_blend_5dir(grad_c, grad_u, grad_d, grad_l, grad_r, s2_data[idx], s3_data[idx]);
                 output[idx] = stage4_output(s3_data[idx], s2_data[idx], s1_data[idx].win_size, win_thresh, blend_ratio);
             }
         }

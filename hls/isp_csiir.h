@@ -82,7 +82,8 @@ void stage2_average(
 // Stage 3: Gradient-weighted Directional Fusion
 // ============================================================
 void stage3_blend(
-    grad_t        grad_5x5[5][5],
+    grad_t        grad_c, grad_t grad_u, grad_t grad_d,
+    grad_t        grad_l, grad_t grad_r,
     avg_value_t   avg0_c, avg_value_t avg0_u, avg_value_t avg0_d,
     avg_value_t   avg0_l, avg_value_t avg0_r,
     avg_value_t   avg1_c, avg_value_t avg1_u, avg_value_t avg1_d,

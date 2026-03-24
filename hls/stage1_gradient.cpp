@@ -23,26 +23,24 @@ static void compute_sobel_gradients(
 ) {
     #pragma HLS INLINE
 
-    // Sobel X: sum(row0) - sum(row4)
-    row_sum_t row0_sum = 0;
-    row_sum_t row4_sum = 0;
-
-    // Sobel Y: sum(col0) - sum(col4)
-    row_sum_t col0_sum = 0;
-    row_sum_t col4_sum = 0;
+    // Use int type for accumulation
+    int row0_sum = 0;
+    int row4_sum = 0;
+    int col0_sum = 0;
+    int col4_sum = 0;
 
     // Compute row and column sums
     for (int i = 0; i < 5; i++) {
         #pragma HLS UNROLL
-        row0_sum += src_5x5[0][i];
-        row4_sum += src_5x5[4][i];
-        col0_sum += src_5x5[i][0];
-        col4_sum += src_5x5[i][4];
+        row0_sum = row0_sum + (int)src_5x5[0][i];
+        row4_sum = row4_sum + (int)src_5x5[4][i];
+        col0_sum = col0_sum + (int)src_5x5[i][0];
+        col4_sum = col4_sum + (int)src_5x5[i][4];
     }
 
     // Compute gradients
-    grad_h = (grad_hv_t)row0_sum - (grad_hv_t)row4_sum;
-    grad_v = (grad_hv_t)col0_sum - (grad_hv_t)col4_sum;
+    grad_h = row0_sum - row4_sum;
+    grad_v = col0_sum - col4_sum;
 }
 
 // ============================================================
@@ -55,12 +53,14 @@ static grad_t compute_combined_gradient(
     #pragma HLS INLINE
 
     // Compute absolute values
-    grad_abs_t grad_h_abs = (grad_h < 0) ? (grad_abs_t)(-grad_h) : (grad_abs_t)grad_h;
-    grad_abs_t grad_v_abs = (grad_v < 0) ? (grad_abs_t)(-grad_v) : (grad_abs_t)grad_v;
+    int gh = (int)grad_h;
+    int gv = (int)grad_v;
+    int grad_h_abs = (gh < 0) ? -gh : gh;
+    int grad_v_abs = (gv < 0) ? -gv : gv;
 
     // Divide by 5 using multiply approximation
-    ap_uint<11> grad_h_div5 = div_by_5(grad_h_abs);
-    ap_uint<11> grad_v_div5 = div_by_5(grad_v_abs);
+    int grad_h_div5 = (grad_h_abs * 205) >> 10;
+    int grad_v_div5 = (grad_v_abs * 205) >> 10;
 
     // Combined gradient
     grad_t grad = grad_h_div5 + grad_v_div5;
@@ -78,19 +78,19 @@ static win_size_t compute_window_size(
     #pragma HLS INLINE
 
     win_size_t win_size;
+    int g = (int)grad_max;
 
     // LUT-based window size determination
-    // grad_max = max(grad(i-1,j), grad(i,j), grad(i+1,j))
-    if (grad_max <= grad_clip[0]) {
-        win_size = 16;  // Minimum window size
-    } else if (grad_max <= grad_clip[1]) {
+    if (g <= (int)grad_clip[0]) {
+        win_size = 16;
+    } else if (g <= (int)grad_clip[1]) {
         win_size = 23;
-    } else if (grad_max <= grad_clip[2]) {
+    } else if (g <= (int)grad_clip[2]) {
         win_size = 31;
-    } else if (grad_max <= grad_clip[3]) {
+    } else if (g <= (int)grad_clip[3]) {
         win_size = 39;
     } else {
-        win_size = 40;  // Maximum window size
+        win_size = 40;
     }
 
     return win_size;
@@ -117,7 +117,7 @@ void stage1_gradient(
         #pragma HLS UNROLL
         for (int j = 0; j < 5; j++) {
             #pragma HLS UNROLL
-            src_s11_5x5[i][j] = (pixel_s11_t)src_5x5[i][j] - (pixel_s11_t)512;
+            src_s11_5x5[i][j] = (int)src_5x5[i][j] - 512;
         }
     }
 
@@ -133,9 +133,7 @@ void stage1_gradient(
     grad = compute_combined_gradient(grad_h, grad_v);
 
     // --------------------------------------------------------
-    // Step 4: Compute window size (using center pixel gradient)
-    // For now, use the current gradient directly
-    // In full implementation, this should use max of 3 gradients
+    // Step 4: Compute window size
     // --------------------------------------------------------
     win_size = compute_window_size(grad, grad_clip);
 }

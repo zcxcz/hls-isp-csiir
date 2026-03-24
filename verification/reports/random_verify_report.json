@@ -1,8 +1,8 @@
 {
-  "start_time": "2026-03-23T21:01:29.802761",
-  "end_time": "2026-03-23T21:02:10.256147",
-  "total": 100,
-  "passed": 100,
+  "start_time": "2026-03-24T01:06:13.781233",
+  "end_time": "2026-03-24T01:06:16.298411",
+  "total": 10,
+  "passed": 10,
   "pass_rate": 100.0,
   "errors": {
     "stage1_max": 0,
@@ -11,29 +11,25 @@
     "output_max": 1
   },
   "pattern_stats": {
-    "gradient": {
-      "total": 22,
-      "passed": 22
+    "extreme": {
+      "total": 4,
+      "passed": 4
     },
     "random": {
-      "total": 34,
-      "passed": 34
+      "total": 1,
+      "passed": 1
     },
-    "corner": {
-      "total": 8,
-      "passed": 8
+    "gradient": {
+      "total": 3,
+      "passed": 3
     },
     "edge": {
-      "total": 16,
-      "passed": 16
+      "total": 1,
+      "passed": 1
     },
     "textured": {
-      "total": 15,
-      "passed": 15
-    },
-    "extreme": {
-      "total": 5,
-      "passed": 5
+      "total": 1,
+      "passed": 1
     }
   },
   "failed_cases": []

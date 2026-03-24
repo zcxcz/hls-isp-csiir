@@ -1,0 +1,26 @@
+{
+  "case_id": "case_0008",
+  "pattern_type": "gradient",
+  "seed": 1151321467,
+  "width": 22,
+  "height": 62,
+  "win_thresh": [
+    28,
+    42,
+    48,
+    49
+  ],
+  "grad_clip": [
+    28,
+    43,
+    48,
+    49
+  ],
+  "blend_ratio": [
+    3,
+    54,
+    7,
+    23
+  ],
+  "edge_protect": 8
+}

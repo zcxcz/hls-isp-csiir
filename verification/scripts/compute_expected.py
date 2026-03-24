@@ -383,22 +383,28 @@ def compute_blend_gradient(avg_values: List[int], grad_values: List[int]) -> int
     return div_by_nr(weighted_sum, grad_sum)
 
 
-def compute_fusion(s2_result: Stage2Result, grad_center: int) -> Stage3Result:
+def compute_fusion(s2_result: Stage2Result,
+                   grad_c: int, grad_u: int, grad_d: int,
+                   grad_l: int, grad_r: int) -> Stage3Result:
     """
-    Stage 3: Compute gradient-weighted fusion.
+    Stage 3: Compute gradient-weighted fusion with 5-direction gradients.
 
-    For simplicity, uses center gradient for all directions.
-    In full implementation, would use neighboring gradients.
+    Uses per-direction gradients for accurate directional weighting:
+    - grad_c: center gradient (current pixel)
+    - grad_u: up gradient (previous row, same column)
+    - grad_d: down gradient (next row, same column)
+    - grad_l: left gradient (current row, previous column)
+    - grad_r: right gradient (current row, next column)
 
     Args:
         s2_result: Stage 2 output
-        grad_center: Center gradient value
+        grad_c, grad_u, grad_d, grad_l, grad_r: 5-direction gradient values
 
     Returns:
         Stage3Result with blend gradients
     """
-    # Use center gradient for all directions (simplified)
-    grad_values = [grad_center] * 5
+    # 5-direction gradient values
+    grad_values = [grad_c, grad_u, grad_d, grad_l, grad_r]
 
     # Compute blend0 (smaller kernel)
     avg0_values = [s2_result.avg0_c, s2_result.avg0_u, s2_result.avg0_d,
@@ -471,6 +477,41 @@ def compute_output(s3_result: Stage3Result, s2_result: Stage2Result,
 # ============================================================
 # Main Processing Pipeline
 # ============================================================
+def compute_gradient_map(image: np.ndarray, grad_clip: List[int]) -> np.ndarray:
+    """
+    Pre-compute gradient map for the entire image.
+
+    This enables 5-direction gradient access in Stage 3 fusion.
+
+    Args:
+        image: Input image (2D numpy array)
+        grad_clip: Gradient clip thresholds
+
+    Returns:
+        2D array of gradient values
+    """
+    height, width = image.shape
+    grad_map = np.zeros((height, width), dtype=np.int32)
+
+    for row in range(height):
+        for col in range(width):
+            # Get 5x5 window
+            window = get_5x5_window(image, row, col)
+            # Compute gradient only
+            s1_result = compute_gradient(window, grad_clip)
+            grad_map[row, col] = s1_result.grad
+
+    return grad_map
+
+
+def get_gradient_with_boundary(grad_map: np.ndarray, row: int, col: int) -> int:
+    """Get gradient value with boundary replication."""
+    height, width = grad_map.shape
+    r = max(0, min(row, height - 1))
+    c = max(0, min(col, width - 1))
+    return int(grad_map[r, c])
+
+
 def process_image(image: np.ndarray,
                   win_thresh: List[int] = None,
                   grad_clip: List[int] = None,
@@ -501,6 +542,9 @@ def process_image(image: np.ndarray,
     output_image = np.zeros((height, width), dtype=np.uint16)
     results = []
 
+    # Pre-compute gradient map for 5-direction gradient access
+    grad_map = compute_gradient_map(image, grad_clip)
+
     for row in range(height):
         for col in range(width):
             # Get 5x5 window
@@ -513,8 +557,15 @@ def process_image(image: np.ndarray,
             # Stage 2: Directional averages
             s2_result = compute_averages(window_s11, s1_result.win_size, win_thresh)
 
-            # Stage 3: Gradient-weighted fusion
-            s3_result = compute_fusion(s2_result, s1_result.grad)
+            # Stage 3: Gradient-weighted fusion with 5-direction gradients
+            # Get 5-direction gradients from gradient map
+            grad_c = get_gradient_with_boundary(grad_map, row, col)      # center
+            grad_u = get_gradient_with_boundary(grad_map, row - 1, col)  # up (previous row)
+            grad_d = get_gradient_with_boundary(grad_map, row + 1, col)  # down (next row)
+            grad_l = get_gradient_with_boundary(grad_map, row, col - 1)  # left
+            grad_r = get_gradient_with_boundary(grad_map, row, col + 1)  # right
+
+            s3_result = compute_fusion(s2_result, grad_c, grad_u, grad_d, grad_l, grad_r)
 
             # Stage 4: Output
             output = compute_output(
