@@ -239,7 +239,7 @@ class PatternGenerator:
             # L形角点
             cx = self.rng.randint(width // 4, 3 * width // 4)
             cy = self.rng.randint(height // 4, 3 * height // 4)
-            arm_len = self.rng.randint(5, min(width, height) // 4)
+            arm_len = self.rng.randint(5, max(6, min(width, height) // 4))
             intensity = self.rng.randint(700, 1024)
             image[cy:cy+arm_len, cx:cx+2] = intensity
             image[cy:cy+2, cx:cx+arm_len] = intensity
@@ -297,7 +297,7 @@ class PatternGenerator:
         elif extreme_type == 'mostly_zero':
             # 大部分为0，少量非零
             image = np.zeros((height, width), dtype=np.uint16)
-            num_peaks = self.rng.randint(5, max(5, width * height // 50))
+            num_peaks = self.rng.randint(1, max(2, width * height // 50))
             for _ in range(num_peaks):
                 r, c = self.rng.randint(0, height), self.rng.randint(0, width)
                 image[r, c] = self.rng.randint(800, 1024)
@@ -306,7 +306,7 @@ class PatternGenerator:
         elif extreme_type == 'mostly_max':
             # 大部分为最大值，少量低值
             image = np.full((height, width), self.pix_const.MAX_VALUE, dtype=np.uint16)
-            num_valleys = self.rng.randint(5, max(5, width * height // 50))
+            num_valleys = self.rng.randint(1, max(2, width * height // 50))
             for _ in range(num_valleys):
                 r, c = self.rng.randint(0, height), self.rng.randint(0, width)
                 image[r, c] = self.rng.randint(0, 200)
@@ -384,10 +384,10 @@ class PatternGenerator:
             # 添加几个高亮区域
             num_regions = self.rng.randint(2, 5)
             for _ in range(num_regions):
-                x = self.rng.randint(0, width - width // 4)
-                y = self.rng.randint(0, height - height // 4)
-                w = self.rng.randint(width // 8, width // 4)
-                h = self.rng.randint(height // 8, height // 4)
+                x = self.rng.randint(0, max(1, width - width // 4))
+                y = self.rng.randint(0, max(1, height - height // 4))
+                w = self.rng.randint(max(1, width // 8), max(2, width // 4))
+                h = self.rng.randint(max(1, height // 8), max(2, height // 4))
                 image[y:y+h, x:x+w] = self.rng.randint(600, 900, (h, w), dtype=np.uint16)
 
             return image
