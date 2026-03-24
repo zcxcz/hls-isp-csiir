@@ -231,19 +231,37 @@ void stage2_average(pixel_s11_t src_s11[5][5], int win_size,
     avg1_r = compute_directional_average(src_s11, avg1_factor, MASK_R);
 }
 
-void stage3_blend(int grad,
-                  int avg0_c, int avg0_u, int avg0_d, int avg0_l, int avg0_r,
-                  int avg1_c, int avg1_u, int avg1_d, int avg1_l, int avg1_r,
-                  int &blend0_grad, int &blend1_grad) {
-    uint32_t grad_sum = (uint32_t)grad * 5;
+// Helper: Get gradient with boundary replication
+int get_grad_with_boundary(const std::vector<int> &grad_map, int row, int col, int h, int w) {
+    int r = std::max(0, std::min(row, h - 1));
+    int c = std::max(0, std::min(col, w - 1));
+    return grad_map[r * w + c];
+}
+
+// Updated: Use 5-direction gradients
+void stage3_blend_5dir(int grad_c, int grad_u, int grad_d, int grad_l, int grad_r,
+                       int avg0_c, int avg0_u, int avg0_d, int avg0_l, int avg0_r,
+                       int avg1_c, int avg1_u, int avg1_d, int avg1_l, int avg1_r,
+                       int &blend0_grad, int &blend1_grad) {
+    // Compute gradient sum using 5 different gradients
+    uint32_t grad_sum = (uint32_t)grad_c + (uint32_t)grad_u + (uint32_t)grad_d +
+                        (uint32_t)grad_l + (uint32_t)grad_r;
+
     if (grad_sum == 0) {
+        // Equal weight average
         blend0_grad = (avg0_c + avg0_u + avg0_d + avg0_l + avg0_r) / 5;
         blend1_grad = (avg1_c + avg1_u + avg1_d + avg1_l + avg1_r) / 5;
     } else {
-        int64_t sum_avg0 = (int64_t)avg0_c + avg0_u + avg0_d + avg0_l + avg0_r;
-        int64_t sum_avg1 = (int64_t)avg1_c + avg1_u + avg1_d + avg1_l + avg1_r;
-        blend0_grad = div_by_nr(grad * sum_avg0, grad_sum);
-        blend1_grad = div_by_nr(grad * sum_avg1, grad_sum);
+        // Gradient-weighted average with 5 different gradient values
+        int64_t weighted_sum0 = (int64_t)avg0_c * grad_c + (int64_t)avg0_u * grad_u +
+                                (int64_t)avg0_d * grad_d + (int64_t)avg0_l * grad_l +
+                                (int64_t)avg0_r * grad_r;
+        int64_t weighted_sum1 = (int64_t)avg1_c * grad_c + (int64_t)avg1_u * grad_u +
+                                (int64_t)avg1_d * grad_d + (int64_t)avg1_l * grad_l +
+                                (int64_t)avg1_r * grad_r;
+
+        blend0_grad = div_by_nr(weighted_sum0, grad_sum);
+        blend1_grad = div_by_nr(weighted_sum1, grad_sum);
     }
 }
 
@@ -377,6 +395,25 @@ int main(int argc, char *argv[]) {
     std::vector<int> s3_blend0(total_pixels), s3_blend1(total_pixels);
     std::vector<uint16_t> output(total_pixels);
 
+    // Step 1: Pre-compute gradient map (like Python model)
+    std::vector<int> grad_map(total_pixels);
+    for (int r = 0; r < height; r++) {
+        for (int c = 0; c < width; c++) {
+            pixel_u10_t win[5][5];
+            for (int i = 0; i < 5; i++) {
+                for (int j = 0; j < 5; j++) {
+                    int ri = std::max(0, std::min(r + i - 2, height - 1));
+                    int ci = std::max(0, std::min(c + j - 2, width - 1));
+                    win[i][j] = input[ri * width + ci];
+                }
+            }
+            int grad, win_size, grad_h, grad_v;
+            stage1_gradient(win, grad, win_size, grad_h, grad_v);
+            grad_map[r * width + c] = grad;
+        }
+    }
+
+    // Step 2: Process with 5-direction gradients
     for (int r = 0; r < height; r++) {
         for (int c = 0; c < width; c++) {
             int idx = r * width + c;
@@ -401,11 +438,17 @@ int main(int argc, char *argv[]) {
                           s2_avg0_c[idx], s2_avg0_u[idx], s2_avg0_d[idx], s2_avg0_l[idx], s2_avg0_r[idx],
                           s2_avg1_c[idx], s2_avg1_u[idx], s2_avg1_d[idx], s2_avg1_l[idx], s2_avg1_r[idx]);
 
-            // Stage 3
-            stage3_blend(s1_grad[idx],
-                        s2_avg0_c[idx], s2_avg0_u[idx], s2_avg0_d[idx], s2_avg0_l[idx], s2_avg0_r[idx],
-                        s2_avg1_c[idx], s2_avg1_u[idx], s2_avg1_d[idx], s2_avg1_l[idx], s2_avg1_r[idx],
-                        s3_blend0[idx], s3_blend1[idx]);
+            // Stage 3: Use 5-direction gradients from gradient map
+            int grad_c = get_grad_with_boundary(grad_map, r, c, height, width);
+            int grad_u = get_grad_with_boundary(grad_map, r - 1, c, height, width);
+            int grad_d = get_grad_with_boundary(grad_map, r + 1, c, height, width);
+            int grad_l = get_grad_with_boundary(grad_map, r, c - 1, height, width);
+            int grad_r = get_grad_with_boundary(grad_map, r, c + 1, height, width);
+
+            stage3_blend_5dir(grad_c, grad_u, grad_d, grad_l, grad_r,
+                             s2_avg0_c[idx], s2_avg0_u[idx], s2_avg0_d[idx], s2_avg0_l[idx], s2_avg0_r[idx],
+                             s2_avg1_c[idx], s2_avg1_u[idx], s2_avg1_d[idx], s2_avg1_l[idx], s2_avg1_r[idx],
+                             s3_blend0[idx], s3_blend1[idx]);
 
             // Stage 4
             output[idx] = stage4_output(s3_blend0[idx], s3_blend1[idx],
