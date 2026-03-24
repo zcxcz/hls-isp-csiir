@@ -1,0 +1,42 @@
+# ============================================================
+# ISP-CSIIR HLS Coverage Build Makefile
+# ============================================================
+
+CXX = g++
+CXXFLAGS = -std=c++17 -O0 -g
+COV_FLAGS = -fprofile-arcs -ftest-coverage
+
+# Source files
+SRCS = tb_random.cpp
+OBJS = $(SRCS:.cpp=.o)
+COV_OBJS = $(SRCS:.cpp=.gcno)
+
+# Target
+TARGET = tb_random_cov
+
+.PHONY: all clean coverage
+
+all: $(TARGET)
+
+$(TARGET): $(SRCS)
+	$(CXX) $(CXXFLAGS) $(COV_FLAGS) -o $@ $^
+
+coverage: $(TARGET)
+	@echo "Run $(TARGET) with test cases to generate coverage data"
+	@echo "Then run: gcov tb_random.cpp"
+
+clean:
+	rm -f $(TARGET) *.gcda *.gcno *.gcov
+	rm -rf coverage_output
+
+# Run with a test case
+run-test: $(TARGET)
+	./$(TARGET) ../verification/test_vectors/random/case_0000/input.txt ./coverage_output ../verification/test_vectors/random/case_0000/config.txt
+
+# Generate coverage report
+report:
+	gcov tb_random.cpp
+	@echo "Coverage data generated. Run lcov/genhtml for detailed reports."
+
+# Full coverage workflow
+full-coverage: $(TARGET) run-test report
