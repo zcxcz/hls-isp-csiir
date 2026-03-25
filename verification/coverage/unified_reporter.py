@@ -312,20 +312,22 @@ class UnifiedCoverageReporter:
             func_bins_covered = summary_data.get('covered_bins', 0)
             func_bins_total = summary_data.get('total_bins', 0)
         else:
-            # 来自 func_collector
-            func_point_cov = func_data.get('overall_coverage', 0.0)
-            func_bin_cov = func_data.get('overall_coverage', 0.0)
+            # 来自 func_collector - 数据格式为 coverage points 作为顶级 keys
             func_points_covered = 0
             func_points_total = 0
             func_bins_covered = 0
             func_bins_total = 0
             for point_name, point_data in func_data.items():
-                if isinstance(point_data, dict):
+                if isinstance(point_data, dict) and 'coverage' in point_data:
                     func_points_total += 1
                     if point_data.get('coverage', 0) >= 100:
                         func_points_covered += 1
                     func_bins_covered += point_data.get('covered_bins', 0)
                     func_bins_total += point_data.get('total_bins', 0)
+
+            # 计算覆盖率百分比
+            func_point_cov = (func_points_covered / func_points_total * 100) if func_points_total > 0 else 0.0
+            func_bin_cov = (func_bins_covered / func_bins_total * 100) if func_bins_total > 0 else 0.0
 
         # 代码覆盖率统计
         if code_data:
