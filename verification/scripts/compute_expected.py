@@ -14,8 +14,16 @@ Version: v1.0
 import os
 import sys
 import numpy as np
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 from dataclasses import dataclass
+
+# Coverage collection support
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from coverage import FunctionalCoverageCollector, ISPConfig
+    COVERAGE_AVAILABLE = True
+except ImportError:
+    COVERAGE_AVAILABLE = False
 
 # ============================================================
 # Constants
@@ -158,8 +166,14 @@ class ProcessingResult:
 # ============================================================
 # Division Utilities (Matching HLS Implementation)
 # ============================================================
+# Module-level coverage collector for division sampling
+_coverage_collector = None
+
 def div_by_5(x: int) -> int:
     """Division by 5 using multiply approximation: x/5 ≈ (x*205)>>10"""
+    global _coverage_collector
+    if _coverage_collector:
+        _coverage_collector.sample_division_type(5, "constant")
     return (x * 205) >> 10
 
 
@@ -177,6 +191,9 @@ INV_TABLE = [0] + [int(65536 / d) for d in range(1, 65)]
 
 def div_by_lookup(numerator: int, denominator: int) -> int:
     """Division using lookup table for reciprocal."""
+    global _coverage_collector
+    if _coverage_collector:
+        _coverage_collector.sample_division_type(denominator, "lookup")
     if denominator == 0:
         return 0
 
@@ -199,6 +216,9 @@ def initial_reciprocal(denominator: int) -> int:
 
 def div_by_nr(numerator: int, denominator: int) -> int:
     """Newton-Raphson division."""
+    global _coverage_collector
+    if _coverage_collector:
+        _coverage_collector.sample_division_type(denominator, "variable")
     if denominator == 0 or numerator == 0:
         return 0
 
@@ -516,7 +536,9 @@ def process_image(image: np.ndarray,
                   win_thresh: List[int] = None,
                   grad_clip: List[int] = None,
                   blend_ratio: List[int] = None,
-                  edge_protect: int = 32) -> Tuple[np.ndarray, List[ProcessingResult]]:
+                  edge_protect: int = 32,
+                  coverage_collector: Optional['FunctionalCoverageCollector'] = None,
+                  pattern_type: str = None) -> Tuple[np.ndarray, List[ProcessingResult]]:
     """
     Process entire image through ISP-CSIIR pipeline.
 
@@ -526,6 +548,8 @@ def process_image(image: np.ndarray,
         grad_clip: Gradient clip thresholds
         blend_ratio: Blend ratios
         edge_protect: Edge protection coefficient
+        coverage_collector: Optional coverage collector for functional coverage
+        pattern_type: Pattern type for coverage sampling
 
     Returns:
         Tuple of (output_image, list of per-pixel results)
@@ -541,6 +565,28 @@ def process_image(image: np.ndarray,
     height, width = image.shape
     output_image = np.zeros((height, width), dtype=np.uint16)
     results = []
+
+    # Set module-level coverage collector for division sampling
+    global _coverage_collector
+    _coverage_collector = coverage_collector
+
+    # Sample image size coverage
+    if coverage_collector:
+        coverage_collector.sample_image_size(width, height)
+        if pattern_type:
+            coverage_collector.sample_pattern_type(pattern_type)
+
+        # Sample pixel distribution
+        image_mean = float(np.mean(image))
+        image_std = float(np.std(image))
+        image_min = int(np.min(image))
+        image_max = int(np.max(image))
+        coverage_collector.sample_pixel_distribution({
+            'mean': image_mean,
+            'std': image_std,
+            'min_val': image_min,
+            'max_val': image_max
+        })
 
     # Pre-compute gradient map for 5-direction gradient access
     grad_map = compute_gradient_map(image, grad_clip)
@@ -575,6 +621,24 @@ def process_image(image: np.ndarray,
 
             output_image[row, col] = output
 
+            # Coverage sampling for this pixel
+            if coverage_collector:
+                # Sample configuration space
+                coverage_collector.sample_config(s1_result.win_size, win_thresh)
+                coverage_collector.sample_grad_clip(s1_result.grad, grad_clip)
+                coverage_collector.sample_blend_ratio(s1_result.win_size)
+
+                # Sample boundary conditions
+                coverage_collector.sample_boundary(row, col, height, width)
+
+                # Sample gradient direction
+                coverage_collector.sample_gradient_direction(
+                    s1_result.grad_h, s1_result.grad_v
+                )
+
+                # Sample overflow events
+                coverage_collector.sample_overflow(output)
+
             # Store result for debugging
             result = ProcessingResult(
                 input_pixel=int(image[row, col]),
@@ -584,6 +648,9 @@ def process_image(image: np.ndarray,
                 stage3=s3_result
             )
             results.append(result)
+
+    # Clear module-level coverage collector
+    _coverage_collector = None
 
     return output_image, results
 
@@ -606,7 +673,19 @@ def load_input_image(filename: str, width: int, height: int) -> np.ndarray:
     image = np.zeros((height, width), dtype=np.uint16)
     with open(filename, 'r') as f:
         lines = f.readlines()
-        for i, line in enumerate(lines):
+        # Skip header line if present (width height on first line)
+        start_idx = 0
+        if lines and len(lines[0].strip().split()) == 2:
+            try:
+                parts = lines[0].strip().split()
+                int(parts[0])
+                int(parts[1])
+                start_idx = 1  # Skip header line
+            except ValueError:
+                pass
+
+        pixel_lines = lines[start_idx:]
+        for i, line in enumerate(pixel_lines):
             if i >= width * height:
                 break
             row = i // width

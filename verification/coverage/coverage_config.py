@@ -77,7 +77,8 @@ FUNCTIONAL_COVERAGE_POINTS: List[CoveragePointConfig] = [
         description="窗口阈值区间覆盖",
         category="configuration",
         bins=[
-            CoverageBinConfig("below_t0", "win_size < t0", goal=10),
+            # Note: below_t0 is removed because win_size minimum is 16
+            # and can never be below the minimum threshold
             CoverageBinConfig("t0_t1", "t0 <= win_size < t1", goal=10),
             CoverageBinConfig("t1_t2", "t1 <= win_size < t2", goal=10),
             CoverageBinConfig("t2_t3", "t2 <= win_size < t3", goal=10),
@@ -181,16 +182,8 @@ FUNCTIONAL_COVERAGE_POINTS: List[CoveragePointConfig] = [
     ),
 
     # FP-04: 数据通路覆盖
-    CoveragePointConfig(
-        name="overflow_event",
-        description="溢出事件覆盖",
-        category="data_path",
-        bins=[
-            CoverageBinConfig("output_underflow", "输出下溢 (<0)", goal=5),
-            CoverageBinConfig("output_overflow", "输出上溢 (>1023)", goal=5),
-        ]
-    ),
-
+    # Note: overflow_event is removed because the algorithm internally clamps
+    # output to [0, 1023], making overflow/underflow impossible
     CoveragePointConfig(
         name="division_type",
         description="除法类型覆盖",

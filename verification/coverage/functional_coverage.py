@@ -148,10 +148,11 @@ class FunctionalCoverageModel:
         self.points[point_name].sample(bin_name, count)
 
     def sample_config(self, win_size: int, win_thresh: List[int]):
-        """采样配置空间覆盖 - 窗口阈值"""
-        if win_size < win_thresh[0]:
-            self.sample("config_win_thresh", "below_t0")
-        elif win_size < win_thresh[1]:
+        """采样配置空间覆盖 - 窗口阈值
+
+        Note: below_t0 bin is removed since win_size minimum is 16
+        """
+        if win_size < win_thresh[1]:
             self.sample("config_win_thresh", "t0_t1")
         elif win_size < win_thresh[2]:
             self.sample("config_win_thresh", "t1_t2")
@@ -231,11 +232,9 @@ class FunctionalCoverageModel:
             self.sample("window_completeness", "partial_right")
 
     def sample_overflow(self, output_value: int):
-        """采样溢出事件"""
-        if output_value < 0:
-            self.sample("overflow_event", "output_underflow")
-        elif output_value > 1023:
-            self.sample("overflow_event", "output_overflow")
+        """采样溢出事件 - 已移除覆盖点，保留方法签名以兼容"""
+        # Coverage point removed: algorithm internally clamps output to [0, 1023]
+        pass
 
     def sample_gradient_direction(self, grad_h: int, grad_v: int):
         """采样梯度方向"""
@@ -249,6 +248,54 @@ class FunctionalCoverageModel:
             self.sample("gradient_direction", "diagonal")
         else:
             self.sample("gradient_direction", "mixed")
+
+    def sample_pixel_distribution(self, image_stats: Dict):
+        """
+        采样像素值分布
+
+        Args:
+            image_stats: 包含像素统计信息的字典
+                - mean: 平均像素值
+                - std: 标准差
+                - min_val: 最小值
+                - max_val: 最大值
+        """
+        mean = image_stats.get('mean', 512)
+        std = image_stats.get('std', 0)
+        min_val = image_stats.get('min_val', 0)
+        max_val = image_stats.get('max_val', 1023)
+
+        # 判断分布类型
+        if min_val == 0 and max_val == 0:
+            self.sample("pixel_distribution", "all_zero")
+        elif min_val == 1023 and max_val == 1023:
+            self.sample("pixel_distribution", "all_max")
+        elif std < 100:
+            # 低方差，像素集中在某个区域
+            if mean < 256:
+                self.sample("pixel_distribution", "low")
+            elif mean < 768:
+                self.sample("pixel_distribution", "mid")
+            else:
+                self.sample("pixel_distribution", "high")
+        else:
+            # 高方差，混合分布
+            self.sample("pixel_distribution", "mixed")
+
+    def sample_division_type(self, divisor: int, dividend_type: str = "variable"):
+        """
+        采样除法类型
+
+        Args:
+            divisor: 除数
+            dividend_type: 被除数类型 ("constant", "variable", "lookup")
+        """
+        if divisor == 5:
+            self.sample("division_type", "div_by_5")
+        elif dividend_type == "lookup":
+            self.sample("division_type", "div_by_lookup")
+        else:
+            self.sample("division_type", "div_by_nr")
 
     @property
     def overall_coverage(self) -> float:
@@ -384,8 +431,47 @@ class FunctionalCoverageCollector:
     def sample_image_size(self, *args, **kwargs):
         return self.model.sample_image_size(*args, **kwargs)
 
+    def sample_grad_clip(self, *args, **kwargs):
+        return self.model.sample_grad_clip(*args, **kwargs)
+
+    def sample_gradient_direction(self, *args, **kwargs):
+        return self.model.sample_gradient_direction(*args, **kwargs)
+
+    def sample_overflow(self, *args, **kwargs):
+        return self.model.sample_overflow(*args, **kwargs)
+
+    def sample_blend_ratio(self, *args, **kwargs):
+        return self.model.sample_blend_ratio(*args, **kwargs)
+
+    def sample_pixel_distribution(self, *args, **kwargs):
+        return self.model.sample_pixel_distribution(*args, **kwargs)
+
+    def sample_division_type(self, *args, **kwargs):
+        return self.model.sample_division_type(*args, **kwargs)
+
+    def sample_overflow(self, *args, **kwargs):
+        return self.model.sample_overflow(*args, **kwargs)
+
+    def sample_blend_ratio(self, *args, **kwargs):
+        return self.model.sample_blend_ratio(*args, **kwargs)
+
     def report(self) -> Dict:
         return self.model.report()
+
+    def get_coverage_summary(self) -> Dict:
+        """获取覆盖率摘要，用于报告生成"""
+        summary = {}
+        for name, point in self.model.points.items():
+            bins_summary = {}
+            for bin_name, bin_obj in point.bins.items():
+                bins_summary[bin_name] = bin_obj.hit_count
+            summary[name] = {
+                'coverage': point.coverage,
+                'covered_bins': point.covered_bins,
+                'total_bins': point.total_bins,
+                'bins': bins_summary
+            }
+        return summary
 
     def save_report(self, filename: str):
         return self.model.save_report(filename)

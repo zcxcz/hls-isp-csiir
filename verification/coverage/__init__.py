@@ -29,6 +29,23 @@ from .code_coverage import (
     collect_code_coverage
 )
 
+from .hls_code_coverage import (
+    HLSFileCoverage,
+    HLSCodeCoverageSummary,
+    HLSCodeCoverageCollector,
+    collect_hls_coverage
+)
+
+from .unified_reporter import (
+    CoverageMetadata,
+    CoverageSummaryStats,
+    UnifiedCoverageReport,
+    UnifiedReportConfig,
+    UnifiedCoverageReporter,
+    generate_unified_report,
+    merge_coverage_reports
+)
+
 from .config_consistency import (
     ISPConfig,
     ConfigConsistencyChecker,
@@ -58,6 +75,21 @@ __all__ = [
     'CodeCoverageSummary',
     'CodeCoverageCollector',
     'collect_code_coverage',
+
+    # HLS Code Coverage
+    'HLSFileCoverage',
+    'HLSCodeCoverageSummary',
+    'HLSCodeCoverageCollector',
+    'collect_hls_coverage',
+
+    # Unified Reporter
+    'CoverageMetadata',
+    'CoverageSummaryStats',
+    'UnifiedCoverageReport',
+    'UnifiedReportConfig',
+    'UnifiedCoverageReporter',
+    'generate_unified_report',
+    'merge_coverage_reports',
 
     # Config Consistency
     'ISPConfig',

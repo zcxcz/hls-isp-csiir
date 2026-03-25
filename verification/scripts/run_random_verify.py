@@ -30,6 +30,18 @@ from compare_intermediate import (
 from random_verify_constraints import ConstraintValidator
 from generate_random_patterns import TestCaseGenerator, TestCaseMetadata
 
+# Coverage collection
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from coverage import (
+        FunctionalCoverageCollector,
+        ConfigConsistencyChecker,
+        ISPConfig
+    )
+    COVERAGE_AVAILABLE = True
+except ImportError:
+    COVERAGE_AVAILABLE = False
+
 
 # ============================================================
 # 配置常量
@@ -113,17 +125,20 @@ class PythonModelRunner:
     调用compute_expected.py中的函数生成期望输出
     """
 
-    def __init__(self, intermediate_dir: str):
+    def __init__(self, intermediate_dir: str,
+                 coverage_collector: Optional['FunctionalCoverageCollector'] = None):
         self.intermediate_dir = intermediate_dir
         self.python_intermediate_dir = os.path.join(intermediate_dir, 'python')
         os.makedirs(self.python_intermediate_dir, exist_ok=True)
+        self.coverage_collector = coverage_collector
 
-    def run_test_case(self, test_case_dir: str) -> Tuple[bool, str]:
+    def run_test_case(self, test_case_dir: str, pattern_type: str = None) -> Tuple[bool, str]:
         """
         运行单个测试用例的Python模型
 
         Args:
             test_case_dir: 测试用例目录
+            pattern_type: Pattern类型（用于覆盖率采样）
 
         Returns:
             (成功, 错误信息)
@@ -137,13 +152,15 @@ class PythonModelRunner:
         input_file = os.path.join(test_case_dir, 'input.txt')
         image = load_input_image(input_file, config['width'], config['height'])
 
-        # 处理图像
+        # 处理图像（带覆盖率收集）
         output_image, results = process_image(
             image,
             win_thresh=config['win_thresh'],
             grad_clip=config['grad_clip'],
             blend_ratio=config['blend_ratio'],
-            edge_protect=config['edge_protect']
+            edge_protect=config['edge_protect'],
+            coverage_collector=self.coverage_collector,
+            pattern_type=pattern_type
         )
 
         # 保存中间结果
@@ -580,18 +597,26 @@ class RandomVerifyRunner:
 
     def __init__(self, output_dir: str = RANDOM_DIR,
                  intermediate_dir: str = INTERMEDIATE_DIR,
-                 reports_dir: str = REPORTS_DIR):
+                 reports_dir: str = REPORTS_DIR,
+                 collect_coverage: bool = True):
         self.output_dir = output_dir
         self.intermediate_dir = intermediate_dir
         self.reports_dir = reports_dir
+        self.collect_coverage = collect_coverage and COVERAGE_AVAILABLE
 
         # 确保目录存在
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(intermediate_dir, exist_ok=True)
         os.makedirs(reports_dir, exist_ok=True)
 
+        # 初始化覆盖率收集器
+        self.coverage_collector = None
+        if self.collect_coverage:
+            self.coverage_collector = FunctionalCoverageCollector()
+            print("[Coverage] 功能覆盖率收集已启用")
+
         # 初始化组件
-        self.python_runner = PythonModelRunner(intermediate_dir)
+        self.python_runner = PythonModelRunner(intermediate_dir, self.coverage_collector)
         self.hls_runner = HLSModelRunner(HLS_DIR, intermediate_dir)
         self.comparator = ResultComparator(intermediate_dir)
 
@@ -626,7 +651,17 @@ class RandomVerifyRunner:
         for i, test_dir in enumerate(test_dirs):
             case_id = os.path.basename(test_dir)
             print(f"  [{i+1}/{len(test_dirs)}] {case_id}", end='\r')
-            success, error = self.python_runner.run_test_case(test_dir)
+
+            # 获取pattern_type用于覆盖率采样
+            pattern_type = None
+            if self.coverage_collector:
+                config_file = os.path.join(test_dir, 'config.json')
+                if os.path.exists(config_file):
+                    with open(config_file, 'r') as f:
+                        config = json.load(f)
+                        pattern_type = config.get('pattern_type', 'unknown')
+
+            success, error = self.python_runner.run_test_case(test_dir, pattern_type)
             results[case_id] = (success, error)
 
         print(f"\n  完成: {len(results)} 个测试用例")
@@ -807,6 +842,66 @@ class RandomVerifyRunner:
 
         return report
 
+    def generate_coverage_report(self) -> Optional[str]:
+        """
+        生成功能覆盖率报告
+
+        Returns:
+            覆盖率报告内容，如果覆盖率收集未启用则返回None
+        """
+        if not self.coverage_collector:
+            return None
+
+        print("\n[Coverage] 生成功能覆盖率报告...")
+
+        # 获取覆盖率数据
+        coverage_data = self.coverage_collector.get_coverage_summary()
+
+        # 构建报告
+        report_lines = [
+            "=" * 60,
+            "ISP-CSIIR 功能覆盖率报告",
+            "=" * 60,
+        ]
+
+        total_points = 0
+        total_covered = 0
+
+        for cp_name, cp_data in coverage_data.items():
+            total_points += 1
+            coverage = cp_data.get('coverage', 0)
+            bins = cp_data.get('bins', {})
+            covered_bins = sum(1 for v in bins.values() if v > 0)
+            total_bins = len(bins)
+
+            total_covered += (1 if coverage > 0 else 0)
+
+            status = "✓" if coverage >= 100 else "○"
+            report_lines.append(f"{status} {cp_name}: {coverage:.1f}% ({covered_bins}/{total_bins} bins)")
+
+        overall_rate = 100.0 * total_covered / total_points if total_points > 0 else 0
+        report_lines.extend([
+            "",
+            "-" * 60,
+            f"总覆盖率: {overall_rate:.1f}% ({total_covered}/{total_points} coverage points)",
+            "=" * 60,
+        ])
+
+        report = '\n'.join(report_lines)
+
+        # 保存报告
+        cov_report_file = os.path.join(self.reports_dir, 'functional_coverage_report.txt')
+        with open(cov_report_file, 'w', encoding='utf-8') as f:
+            f.write(report)
+
+        # 保存JSON格式详细数据
+        cov_json_file = os.path.join(self.reports_dir, 'functional_coverage_report.json')
+        with open(cov_json_file, 'w', encoding='utf-8') as f:
+            json.dump(coverage_data, f, indent=2, ensure_ascii=False)
+
+        print(f"[Coverage] 报告已保存到 {cov_report_file}")
+        return report
+
     def run(self, num_cases: int = 100, seed: int = None) -> str:
         """
         运行完整验证流程
@@ -825,6 +920,8 @@ class RandomVerifyRunner:
         print("=" * 50)
         print(f"测试数量: {num_cases}")
         print(f"随机种子: {seed if seed else '随机'}")
+        if self.collect_coverage:
+            print("覆盖率收集: 已启用")
 
         # 1. 生成测试用例
         test_dirs = self.generate_tests(num_cases, seed)
@@ -840,8 +937,14 @@ class RandomVerifyRunner:
 
         end_time = datetime.now()
 
-        # 5. 生成报告
+        # 5. 生成验证报告
         report = self.generate_report(results, start_time, end_time)
+
+        # 6. 生成功能覆盖率报告
+        if self.collect_coverage:
+            cov_report = self.generate_coverage_report()
+            if cov_report:
+                print("\n" + cov_report)
 
         return report
 
