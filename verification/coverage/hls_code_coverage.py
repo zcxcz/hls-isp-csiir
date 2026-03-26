@@ -79,6 +79,23 @@ class HLSCodeCoverageCollector:
         "div_utils.cpp"
     ]
 
+    # 排除的文件模式（系统头文件等）
+    EXCLUDE_PATTERNS = [
+        "/usr/include/",           # 系统头文件
+        "/usr/lib/",               # 系统库
+        "bits/",                   # C++ STL 内部头文件
+        "ext/",                    # GCC 扩展
+        "x86_64-pc-linux-gnu/",    # 平台特定头文件
+        "new_allocator.h",
+        "alloc_traits.h",
+        "allocator.h",
+        "cpp_type_traits.h",
+        "ptr_traits.h",
+        "char_traits.h",
+        "move.h",
+        "new",
+    ]
+
     # 覆盖率编译选项
     COVERAGE_FLAGS = [
         "-fprofile-arcs",
@@ -430,6 +447,7 @@ class HLSCodeCoverageCollector:
         if output_file is None:
             output_file = str(self.output_dir / "coverage.info")
 
+        # 先收集所有覆盖率数据
         cmd = [
             "lcov",
             "--capture",
@@ -447,6 +465,18 @@ class HLSCodeCoverageCollector:
 
             if result.returncode != 0:
                 return False, result.stderr
+
+            # 移除系统头文件
+            remove_cmd = [
+                "lcov",
+                "--remove", output_file,
+                "/usr/include/*",
+                "/usr/lib/*",
+                "*/bits/*",
+                "*/ext/*",
+                "--output-file", output_file
+            ]
+            subprocess.run(remove_cmd, capture_output=True, text=True, timeout=30)
 
             return True, ""
 
@@ -547,6 +577,21 @@ class HLSCodeCoverageCollector:
 
         return results
 
+    def _should_exclude_file(self, filename: str) -> bool:
+        """
+        检查文件是否应该被排除
+
+        Args:
+            filename: 文件路径
+
+        Returns:
+            是否应该排除
+        """
+        for pattern in self.EXCLUDE_PATTERNS:
+            if pattern in filename:
+                return True
+        return False
+
     def generate_report(self, output_dir: str = None) -> HLSCodeCoverageSummary:
         """
         生成覆盖率报告
@@ -566,8 +611,12 @@ class HLSCodeCoverageCollector:
         if success:
             parsed = self.parse_gcov_output(gcov_output)
 
-            # 构建 FileCoverage 列表
+            # 构建 FileCoverage 列表，排除系统头文件
             for filename, data in parsed.items():
+                # 跳过系统头文件
+                if self._should_exclude_file(filename):
+                    continue
+
                 file_cov = HLSFileCoverage(
                     filename=filename,
                     line_coverage=data.get("line_coverage", 0.0),
